@@ -1,0 +1,91 @@
+import streamlit as st
+import pandas as pd
+import sqlite3
+from datetime import datetime
+
+# --- VERİTABANI AYARLARI ---
+def init_db():
+    conn = sqlite3.connect('lavanta_maliye.db')
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS islemler
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  tarih DATE,
+                  tip TEXT,
+                  kategori TEXT,
+                  odeme_yontemi TEXT,
+                  tutar REAL,
+                  aciklama TEXT)''')
+    conn.commit()
+    return conn
+
+# --- UYGULAMA ARAYÜZÜ ---
+st.set_page_config(page_title="Lavanta Bahçesi Takip", layout="centered")
+st.title("🪻 Lavanta Bahçesi Mali Takip")
+
+conn = init_db()
+
+menu = ["Yeni Kayıt Ekle", "Mali Raporlar", "Kayıtları Düzenle"]
+choice = st.sidebar.selectbox("Menü", menu)
+
+if choice == "Yeni Kayıt Ekle":
+    st.subheader("➕ Yeni İşlem Girişi")
+    
+    with st.form("islem_formu", clear_on_submit=True):
+        col1, col2 = st.columns(2)
+        with col1:
+            tarih = st.date_input("İşlem Tarihi", datetime.now())
+            tip = st.selectbox("İşlem Tipi", ["Gelir", "Gider"])
+        with col2:
+            kategori = st.selectbox("Kategori", [
+                "Giriş Ücreti", "Ürün Satışı", "Fotoğraf Çekimi", 
+                "İşçilik/Yevmiye", "Gübre/İlaç", "Elektrik/Su", "Pazarlama", "Diğer"
+            ])
+            odeme = st.selectbox("Ödeme Yöntemi", ["Nakit", "Kredi Kartı", "Havale/EFT"])
+            
+        tutar = st.number_input("Tutar (TL)", min_value=0.0, step=10.0)
+        aciklama = st.text_area("Notlar / Detaylar")
+        
+        submit = st.form_submit_button("Kaydet")
+        
+        if submit:
+            c = conn.cursor()
+            c.execute("INSERT INTO islemler (tarih, tip, kategori, odeme_yontemi, tutar, aciklama) VALUES (?,?,?,?,?,?)",
+                      (tarih, tip, kategori, odeme, tutar, aciklama))
+            conn.commit()
+            st.success(f"Kayıt başarıyla eklendi! ({tarih})")
+
+elif choice == "Mali Raporlar":
+    st.subheader("📊 Mali Durum Analizi")
+    df = pd.read_sql_query("SELECT * FROM islemler", conn)
+    
+    if not df.empty:
+        # Özet Kartları
+        toplam_gelir = df[df['tip'] == 'Gelir']['tutar'].sum()
+        toplam_gider = df[df['tip'] == 'Gider']['tutar'].sum()
+        net_kar = toplam_gelir - toplam_gider
+        
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Toplam Gelir", f"{toplam_gelir:,.2f} TL")
+        c2.metric("Toplam Gider", f"{toplam_gider:,.2f} TL")
+        c3.metric("Net Kar", f"{net_kar:,.2f} TL", delta=net_kar)
+
+        # Grafik
+        st.write("### Kategori Bazlı Dağılım")
+        chart_data = df.groupby(['tip', 'kategori'])['tutar'].sum().unstack(fill_value=0)
+        st.bar_chart(chart_data)
+        
+        st.write("### Tüm İşlemler")
+        st.dataframe(df.sort_values(by="tarih", ascending=False))
+    else:
+        st.info("Henüz veri girilmemiş.")
+
+elif choice == "Kayıtları Düzenle":
+    st.subheader("📝 Kayıt Yönetimi")
+    df = pd.read_sql_query("SELECT * FROM islemler", conn)
+    st.write("Buradan kayıtları görüntüleyebilir ve Excel olarak dışa aktarabilirsiniz.")
+    st.dataframe(df)
+    
+    # Excel Çıktısı Alma
+    if st.button("Tüm Verileri Excel Olarak İndir"):
+        df.to_excel("lavanta_bahcesi_yedek.xlsx", index=False)
+        st.success("Yedek oluşturuldu: lavanta_bahcesi_yedek.xlsx")
